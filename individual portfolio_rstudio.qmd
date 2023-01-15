@@ -1,0 +1,158 @@
+---
+  title: "Individual Portfolio"
+output: html_document
+date: "2023-01-15"
+author: Shulaika van Kollenburg
+---
+
+## Business understanding
+The goal of this assignment is to identify how an aviation company can analyze and recognize patterns in relation to delays of airplanes. Therefore, the main question is defined as followed:
+Which factors influence the registered time delay of airplanes based on the NYC flights 2013 dataset?
+  
+## library
+
+library(nycflights13)
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+
+## Data Understanding
+## Showing the data frame in rstudio viewer with the view function. The tibble shows that there are 336776 flights with 19 variables stored in the dataset.
+
+flights 
+view(flights)
+dim(flights)
+
+## looking at the flights that departed OR arrived too late on January first, 99624 flights  where either not departing on time or not arriving on time. 
+
+filter(flights, arr_delay >= 0, dep_delay >= 0)
+
+
+## flights with destination Miami
+
+MIAMI <- (filter(flights,dest == "MIA"))
+head(MIAMI)
+
+
+## 29 flights that arrived more than two hours late, but did depart on time.
+
+filter(flights, arr_delay >= 120, dep_delay <= 0)
+
+## flights that departed 1 hour late but made up 1 hour during the flight which were 35.
+
+filter(flights, dep_delay >= 60, dep_delay-arr_delay >= 60)
+
+
+## Data preparation
+## The summary function displayed NA values in the variables dep_time, dep_delay, arr_time, arr_delay and air_time. The assumption is made that these are more likely cancelled flights as all time variables are "NULL" for that specific flight.  
+
+summary(flights)
+FlightsNA<-na.omit(flights)
+
+summary(FlightsNA)
+
+
+Cor_FlightsNA<- round(cor(FlightsNA[,which(sapply(FlightsNA,is.numeric))]),1)
+corrplot(Cor_FlightsNA,
+         method="color", addCoef.col = "black")
+
+## Detecting correlation between departing delay and arrival delay. The outcome is a high positive correlation. 
+
+cor(FlightsNA[c("dep_delay", "arr_delay")])
+
+ggplot(FlightsNA, aes(x=dep_delay, y=arr_delay))+geom_point()
+
+model1 <- lm(arr_delay~dep_delay, FlightsNA5)
+summary(model1)
+
+## Inserting speed and travel time variable. As the arrival time and departing time are noted as integers, the travel time could become minus as the dataset counts to 2400 and follows to 0001 to showcase 00:01. However, calculating travel time this would become a problem as the difference between midnight and 00:01 is 1 minute, but substraction gives - values. Therefore 2400 is added when travel time becomes a minus value. The dataset now consists of 21 variables. 
+arrange(FlightsNA, (arr_time - dep_time))
+
+FlightsNA2<- mutate(FlightsNA, speed = distance/air_time*60)%>%
+  mutate(FlightsNA, travel_time = ifelse((arr_time - dep_time < 0), 
+                                        2400+(arr_time - dep_time),
+                                        arr_time - dep_time))
+head(FlightsNA2)
+
+
+
+mutate(FlightsNA2,
+       travel_time,hour_tt = travel_time %/% 100,minute_tt = travel_time %% 100)
+
+## Looking at all time variables, dep_time, sched_dep_time, arr_time and sched_arr_time are not registered as continuous numbers so difficult to calculate with. They are converted to the number of minutes since midnight. 
+FlightsNA3 <- mutate(FlightsNA2,
+       dep_time = (dep_time %/% 100) * 60 + (dep_time %% 100),
+       sched_dep_time = (sched_dep_time %/% 100) * 60 + (sched_dep_time %% 100),
+       arr_time = (arr_time %/% 100) * 60 + (arr_time %% 100),
+       sched_arr_time = (sched_arr_time %/% 100) * 60 + (sched_arr_time %% 100))
+
+## Visualizing and identifying patterns
+## flights are sorted into descending order based on the dep_delay, but no significant pattern is identified.
+arrange(FlightsNA3,desc(dep_delay))
+
+
+## Evaluating top 10 most delayed flights by adding arrival delay and departing delay. Moving total delay to the viewscreen and filtering top 5 highest total delay. 
+
+FlightsNA4<- mutate(FlightsNA3, total_delay = dep_delay+(arr_delay-dep_delay))
+FlightsNA5<-select(FlightsNA4, year, month, day, total_delay, everything())
+filter(FlightsNA5, min_rank(desc(total_delay))<=10)
+
+## Turning data delay into one level so the number of minutes of delay do not define the count of delay.
+
+flight_delay <- FlightsNA5 %>% 
+  mutate(delay = ifelse(total_delay >= 15,1,0))%>%
+  select(delay, year, month, day, carrier, origin, air_time, hour, minute, distance, total_delay)
+head(flight_delay)
+
+## Distribution of flights delays by month. 
+
+flight_delay %>% group_by(month, delay)%>%
+  ggplot(aes(x = month, y=delay, factor(delay)))+ geom_col() + scale_x_discrete(limits=1:12) + ylab("count of flights")+ggtitle("Count of Delayed flights in 2013")
+
+## Looking at the average delay per destination
+mmp <- summarize(FlightsNA5, count= n(),dist = mean(distance), delay = mean(total_delay))
+by_destination <- group_by(FlightsNA5, dest)
+summarize(by_destination, AVG_delay = mean(total_delay))
+
+## Visualizing the delay and distance in relation to each other to see whether the distance effects the number of delays. Most delays are found in short distance flights.
+delay.dest <- summarise(by_destination, count= n(),dist = mean(distance), delay = mean(total_delay))
+head (delay.dest)
+ggplot(data = delay.dest, mapping = aes(x = dist, y = delay)) +
+  geom_point(aes(size = count), alpha = 1/3) +
+  geom_smooth (se = FALSE)
+
+
+## Looking at the distribution of delays by hour. It seems that the number of delays are more frequent later in the day. 
+flight_delay %>% filter(delay == 1) %>% group_by(hour) %>% summarize(n_delays = n()) %>%
+  ggplot(aes(x= hour, y = n_delays)) +
+  geom_point() + ylab("# of delays") + 
+  geom_line() +
+  ggtitle("Distibution of delays by hour")
+
+
+## Number of flights per airline which is merged with "airlines" from another dataset in FlightsNYC.
+
+flight_airline <- left_join(FlightsNA5, airlines, by= "carrier")
+flight_airline %>% mutate(flight_performance = case_when(dep_delay <15 ~ "on-time", dep_delay >15 ~ "too late"))%>%
+  ggplot(aes(x = name, fill = flight_performance)) +
+  geom_bar(stat = "count", position = "dodge") +
+  coord_flip() +
+  theme(legend.position = "top") +
+  scale_fill_manual(values = c("on-time" = "deepskyblue4", "too late" = "green")) +
+  xlab("Airline") +
+  ylab("Flight Count")
+
+## Looking at the carrier with the longest AVG delay resulting in F9 and FL
+by_carrier <- group_by(FlightsNA5, carrier)
+summarize(by_carrier, AVG_delay = mean(total_delay)) %>%
+  arrange(desc(AVG_delay))
+
+
+## Looking at which tail number have the highest delay record. N844MH has the highest record of delayed flight count.  
+FlightsNA5 %>%
+  group_by(tailnum) %>%
+  summarise(prop_on_time = sum(arr_delay <= 30)/n(),
+            mean_arr_delay = mean(arr_delay),
+            FlightsNA5 = n()) %>%
+  arrange(prop_on_time, desc(mean_arr_delay))
+
